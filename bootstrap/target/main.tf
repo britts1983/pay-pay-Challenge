@@ -24,10 +24,10 @@ data "aws_iam_policy_document" "target_deployment" {
     sid    = "ManageEnvControlTargetIAM"
     effect = "Allow"
     actions = [
-                "iam:*",
-                "ec2:*",
-                "ssm:GetParameter"
-             ]
+      "iam:*",
+      "ec2:*",
+      "ssm:GetParameter"
+    ]
     resources = ["*"]
   }
 }
