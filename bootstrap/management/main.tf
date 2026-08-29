@@ -35,7 +35,8 @@ data "aws_iam_policy_document" "github_assume_role" {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
       values = [
-        "repo:${var.github_org}/${var.github_repository}:*"
+        "repo:${var.github_org}/${var.github_repository}:*",
+        "repo:${var.github_org}@*/${var.github_repository}@*:*"
       ]
     }
   }

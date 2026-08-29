@@ -21,9 +21,13 @@ resource "aws_iam_role" "target_deployment" {
 
 data "aws_iam_policy_document" "target_deployment" {
   statement {
-    sid       = "ManageEnvControlTargetIAM"
-    effect    = "Allow"
-    actions   = ["iam:*"]
+    sid    = "ManageEnvControlTargetIAM"
+    effect = "Allow"
+    actions = [
+                "iam:*",
+                "ec2:*",
+                "ssm:GetParameter"
+             ]
     resources = ["*"]
   }
 }
