@@ -1,0 +1,14 @@
+# Placeholder IDs only. Replace through GitHub Actions repository variables
+# or a local, uncommitted terraform.tfvars when testing.
+management_account_id = "111111111111"
+target_account_id     = "222222222222"
+
+aws_region = "ap-northeast-1"
+
+# Bootstrap deployment role in the target account.
+target_deployment_role_arn = "arn:aws:iam::222222222222:role/TerraformTargetDeploymentRole"
+
+tag_key   = "EnvControl"
+tag_value = "True"
+
+enable_schedules = false

@@ -1,0 +1,133 @@
+name: Terraform CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  TF_IN_AUTOMATION: "true"
+  TF_VAR_aws_region: ${{ vars.AWS_REGION }}
+  TF_VAR_management_account_id: ${{ vars.MANAGEMENT_ACCOUNT_ID }}
+  TF_VAR_target_account_id: ${{ vars.TARGET_ACCOUNT_ID }}
+  TF_VAR_target_deployment_role_arn: ${{ vars.TARGET_DEPLOYMENT_ROLE_ARN }}
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+
+      - name: Terraform format check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform init without backend
+        run: terraform init -backend=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+  plan:
+    name: Plan
+    runs-on: ubuntu-latest
+    needs: validate
+
+    # Do not expose AWS credentials to untrusted fork PRs.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+
+      - name: Authenticate to management AWS account with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.MANAGEMENT_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-terraform-plan
+
+      - name: Terraform init
+        run: >
+          terraform init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=${{ vars.TF_STATE_KEY }}"
+          -backend-config="region=${{ vars.AWS_REGION }}"
+          -backend-config="use_lockfile=true"
+
+      - name: Terraform plan
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Save Terraform plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ github.sha }}
+          path: tfplan
+          retention-days: 5
+
+  apply:
+    name: Apply
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+      - plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    # Configure required reviewers on this GitHub Environment.
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.0"
+
+      - name: Authenticate to management AWS account with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.MANAGEMENT_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-terraform-apply
+
+      - name: Terraform init
+        run: >
+          terraform init
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=${{ vars.TF_STATE_KEY }}"
+          -backend-config="region=${{ vars.AWS_REGION }}"
+          -backend-config="use_lockfile=true"
+
+      - name: Download approved plan
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-${{ github.sha }}
+
+      - name: Terraform apply
+        run: terraform apply -input=false tfplan

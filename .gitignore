@@ -1,0 +1,10 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+lambda/env_control.zip
+.terraform.lock.hcl
+crash.log
+__pycache__/
+*.pyc
