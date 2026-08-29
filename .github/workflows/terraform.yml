@@ -133,3 +133,120 @@ jobs:
 
       - name: Terraform apply
         run: terraform apply -input=false tfplan
+
+
+  functional_test:
+    name: Functional Test
+    runs-on: ubuntu-latest
+    needs: apply
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Authenticate to management AWS account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.MANAGEMENT_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-envcontrol-test
+
+      - name: Invoke Lambda to stop EC2
+        run: |
+          aws lambda invoke \
+            --function-name EnvControl \
+            --payload '{"action":"stop"}' \
+            --cli-binary-format raw-in-base64-out \
+            stop-response.json
+
+          cat stop-response.json
+
+      - name: Verify EC2 stopped
+        shell: bash
+        run: |
+          MGMT_ACCESS_KEY="$AWS_ACCESS_KEY_ID"
+          MGMT_SECRET_KEY="$AWS_SECRET_ACCESS_KEY"
+          MGMT_SESSION_TOKEN="$AWS_SESSION_TOKEN"
+
+          read ACCESS_KEY SECRET_KEY SESSION_TOKEN <<< $(aws sts assume-role \
+            --role-arn "${{ vars.TARGET_DEPLOYMENT_ROLE_ARN }}" \
+            --role-session-name envcontrol-test-stop \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+
+          export AWS_ACCESS_KEY_ID="$ACCESS_KEY"
+          export AWS_SECRET_ACCESS_KEY="$SECRET_KEY"
+          export AWS_SESSION_TOKEN="$SESSION_TOKEN"
+
+          for i in {1..20}; do
+            STATE=$(aws ec2 describe-instances \
+              --region "${{ vars.AWS_REGION }}" \
+              --filters \
+                "Name=tag:EnvControl,Values=True" \
+                "Name=instance-state-name,Values=stopped" \
+              --query 'Reservations[].Instances[].State.Name' \
+              --output text)
+
+            if [[ "$STATE" == *"stopped"* ]]; then
+              echo "EC2 successfully stopped"
+              exit 0
+            fi
+
+            echo "Waiting for EC2 to stop..."
+            sleep 10
+          done
+
+          echo "EC2 did not reach stopped state"
+          exit 1
+
+      - name: Re-authenticate to management AWS account
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.MANAGEMENT_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: github-actions-envcontrol-start
+
+      - name: Invoke Lambda to start EC2
+        run: |
+          aws lambda invoke \
+            --function-name EnvControl \
+            --payload '{"action":"start"}' \
+            --cli-binary-format raw-in-base64-out \
+            start-response.json
+
+          cat start-response.json
+
+      - name: Verify EC2 running
+        shell: bash
+        run: |
+          read ACCESS_KEY SECRET_KEY SESSION_TOKEN <<< $(aws sts assume-role \
+            --role-arn "${{ vars.TARGET_DEPLOYMENT_ROLE_ARN }}" \
+            --role-session-name envcontrol-test-start \
+            --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+            --output text)
+
+          export AWS_ACCESS_KEY_ID="$ACCESS_KEY"
+          export AWS_SECRET_ACCESS_KEY="$SECRET_KEY"
+          export AWS_SESSION_TOKEN="$SESSION_TOKEN"
+
+          for i in {1..20}; do
+            STATE=$(aws ec2 describe-instances \
+              --region "${{ vars.AWS_REGION }}" \
+              --filters \
+                "Name=tag:EnvControl,Values=True" \
+                "Name=instance-state-name,Values=running" \
+              --query 'Reservations[].Instances[].State.Name' \
+              --output text)
+
+            if [[ "$STATE" == *"running"* ]]; then
+              echo "EC2 successfully started"
+              exit 0
+            fi
+
+            echo "Waiting for EC2 to start..."
+            sleep 10
+          done
+
+          echo "EC2 did not reach running state"
+          exit 1
